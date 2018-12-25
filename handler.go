@@ -1,16 +1,22 @@
 package main
 
 import (
+	"bufio"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 type wsServer struct {
-	upgrader *websocket.Upgrader
+	reverseUrlMap map[string]int
+	rt            *http.Transport
+	upgrader      *websocket.Upgrader
 }
 
 type wsHandler struct {
@@ -18,8 +24,39 @@ type wsHandler struct {
 	s     *wsServer
 }
 
+var hopHeaders = map[string]int{
+	"Connection":          1,
+	"Proxy-Connection":    1, // non-standard but still sent by libcurl and rejected by e.g. google
+	"Keep-Alive":          1,
+	"Proxy-Authenticate":  1,
+	"Proxy-Authorization": 1,
+	"Te":                  1, // canonicalized version of "TE"
+	"Trailer":             1, // not Trailers per URL above; http://www.rfc-editor.org/errata_search.php?eid=4522
+	"Transfer-Encoding":   1,
+	"Upgrade":             1,
+	"Content-Length":      1,
+}
+
+func copyResponseHeader(w http.ResponseWriter, resp *http.Response) {
+	newHeader := w.Header()
+	for key, values := range resp.Header {
+		if _, ok := hopHeaders[key]; !ok {
+			for _, v := range values {
+				newHeader.Add(key, v)
+			}
+		}
+	}
+	//log.Println("resp header", resp.Header, newHeader)
+}
+
 func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Println("r.URL", r.URL, "RemoteAddr", r.RemoteAddr, "tls", h.isTls)
+	log.Println("r.URL", r.URL, "r.URL.host=", r.URL.Host, "r.URL.Path", r.URL.Path, "r.Host", r.Host, "r.Method", r.Method, "scheme", r.URL.Scheme, "remoteAddr", r.RemoteAddr, "tls", h.isTls)
+	r.URL.Host = r.Host
+	if h.isTls {
+		r.URL.Scheme = "https"
+	} else {
+		r.URL.Scheme = "http"
+	}
 
 	if r.Header.Get("Upgrade") == "websocket" {
 		err := h.s.serveWebSocket(w, r)
@@ -29,7 +66,25 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Error(w, "not ws connection", 500)
+	resp, err := h.s.rt.RoundTrip(r)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	defer resp.Body.Close()
+	copyResponseHeader(w, resp)
+	if resp.ContentLength > 0 {
+		w.Header().Set("Content-Length", strconv.Itoa(int(resp.ContentLength)))
+	} else {
+		w.Header().Set("Transfer-Encoding", "chunked")
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	if n, err := io.Copy(w, resp.Body); err != nil {
+		log.Printf("error while copying response (URL: %s): %s copy-length: %d", r.URL, err, n)
+	}
+	return
 }
 
 func (s *wsServer) serveWebSocket(w http.ResponseWriter, r *http.Request) error {
@@ -128,4 +183,27 @@ func (s *wsServer) serveWebSocket(w http.ResponseWriter, r *http.Request) error 
 	}
 
 	return nil
+}
+
+func (s *wsServer) parseDNS(hosts string) error {
+	file, err := os.Open(hosts)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		s.reverseUrlMap[scanner.Text()] = 1
+	}
+	return nil
+}
+
+func (s *wsServer) isReverse(host string) bool {
+	if len(host) > 0 && host[len(host)-1] == '.' {
+		host = host[0 : len(host)-1]
+	}
+	if _, ok := s.reverseUrlMap[host]; ok {
+		return true
+	}
+	return false
 }

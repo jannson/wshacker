@@ -19,12 +19,26 @@ func mustReadFile(p string) []byte {
 	return b
 }
 
+func getOutboundIP(s string) (net.IP, error) {
+	conn, err := net.Dial("udp", s)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP, nil
+}
+
 func main() {
-	var full, priv, httpAddr, https string
+	var full, priv, httpAddr, https, hosts, dnsServer string
 	flag.StringVar(&full, "full", "fullchain.pem", "fullchain pem")
 	flag.StringVar(&priv, "priv", "privkey.pem", "private key")
 	flag.StringVar(&httpAddr, "http", ":80", "http addr")
 	flag.StringVar(&https, "https", ":443", "https addr")
+	flag.StringVar(&dnsServer, "dns", "10.1.150.1:53", "dns server addr")
+	flag.StringVar(&hosts, "hosts", "hosts", "hosts file to reverse dns")
 	flag.Parse()
 
 	tlsConfig := &tls.Config{}
@@ -39,6 +53,8 @@ func main() {
 	tlsConfig.BuildNameToCertificate()
 
 	s := &wsServer{
+		reverseUrlMap: make(map[string]int),
+		rt:            &http.Transport{},
 		upgrader: &websocket.Upgrader{
 			ReadBufferSize:    16384,
 			WriteBufferSize:   16384,
@@ -53,10 +69,23 @@ func main() {
 		},
 	}
 
+	err = s.parseDNS(hosts)
+	if err != nil {
+		panic(err)
+	}
+
+	localIP, err := getOutboundIP(dnsServer)
+	if err != nil {
+		panic(err)
+	}
+	log.Println("got localIP", localIP)
+	go runDns(localIP.String(), dnsServer, s)
+
 	lhttp, err := net.Listen("tcp", httpAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Println("run http ok", httpAddr)
 	httpServer := &http.Server{
 		Handler: &wsHandler{false, s},
 	}
@@ -66,8 +95,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Println("run https ok", https)
 	httpsServer := &http.Server{
 		Handler: &wsHandler{true, s},
 	}
-	go httpsServer.Serve(lhttps)
+	httpsServer.Serve(lhttps)
 }
