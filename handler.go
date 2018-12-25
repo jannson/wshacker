@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 type wsServer struct {
+	reversePrefix map[string]int
 	reverseUrlMap map[string]int
 	rt            *http.Transport
 	upgrader      *websocket.Upgrader
@@ -194,8 +196,12 @@ func (s *wsServer) parseDNS(hosts string) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		dns := scanner.Text()
-		if len(dns) > 0 {
-			s.reverseUrlMap[dns] = 1
+		if len(dns) > 2 {
+			if dns[0:2] == "*." {
+				s.reversePrefix[dns[2:len(dns)]] = 1
+			} else {
+				s.reverseUrlMap[dns] = 1
+			}
 		}
 	}
 	return nil
@@ -208,5 +214,15 @@ func (s *wsServer) isReverse(host string) bool {
 	if _, ok := s.reverseUrlMap[host]; ok {
 		return true
 	}
+
+	ss := strings.Split(host, ".")
+	for len(ss) > 1 {
+		newhost := strings.Join(ss, ".")
+		if _, ok := s.reversePrefix[newhost]; ok {
+			return true
+		}
+		ss = ss[1:len(ss)]
+	}
+
 	return false
 }

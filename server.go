@@ -7,17 +7,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/gorilla/websocket"
 )
-
-func mustReadFile(p string) []byte {
-	b, err := ioutil.ReadFile(p)
-	if err != nil {
-		panic(err)
-	}
-	return b
-}
 
 func getOutboundIP(s string) (net.IP, error) {
 	conn, err := net.Dial("udp", s)
@@ -32,9 +26,8 @@ func getOutboundIP(s string) (net.IP, error) {
 }
 
 func main() {
-	var full, priv, httpAddr, https, hosts, dnsServer string
-	flag.StringVar(&full, "full", "fullchain.pem", "fullchain pem")
-	flag.StringVar(&priv, "priv", "privkey.pem", "private key")
+	var certs, httpAddr, https, hosts, dnsServer string
+	flag.StringVar(&certs, "certs", "certs", "certs path")
 	flag.StringVar(&httpAddr, "http", ":80", "http addr")
 	flag.StringVar(&https, "https", ":443", "https addr")
 	flag.StringVar(&dnsServer, "dns", "10.1.150.1:53", "dns server addr")
@@ -43,17 +36,40 @@ func main() {
 
 	tlsConfig := &tls.Config{}
 	tlsConfig.Certificates = make([]tls.Certificate, 0)
-
-	certifi, err := tls.X509KeyPair(mustReadFile(full),
-		mustReadFile(priv))
+	files, err := ioutil.ReadDir(certs)
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	tlsConfig.Certificates = append(tlsConfig.Certificates, certifi)
+	fullchain := ".fullchain"
+	for _, fi := range files {
+		f := fi.Name()
+		if !fi.IsDir() && strings.HasSuffix(f, fullchain) {
+			pub, err := ioutil.ReadFile(filepath.Join(certs, f))
+			if err != nil {
+				log.Println("readfile", filepath.Join(certs, f), err)
+				continue
+			}
+			privkey := f[0:len(f)-len(fullchain)] + ".privkey"
+			priv, err := ioutil.ReadFile(filepath.Join(certs, privkey))
+			if err != nil {
+				log.Println("readfile", filepath.Join(certs, privkey), err)
+				continue
+			}
+
+			certifi, err := tls.X509KeyPair(pub, priv)
+			if err != nil {
+				log.Fatal(err)
+			}
+			log.Println("add cert", f[0:len(f)-len(fullchain)])
+			tlsConfig.Certificates = append(tlsConfig.Certificates, certifi)
+		}
+	}
+
 	tlsConfig.BuildNameToCertificate()
 
 	s := &wsServer{
 		reverseUrlMap: make(map[string]int),
+		reversePrefix: make(map[string]int),
 		rt:            &http.Transport{},
 		upgrader: &websocket.Upgrader{
 			ReadBufferSize:    16384,
