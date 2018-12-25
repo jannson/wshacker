@@ -50,13 +50,13 @@ func copyResponseHeader(w http.ResponseWriter, resp *http.Response) {
 }
 
 func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Println("r.URL", r.URL, "r.URL.host=", r.URL.Host, "r.URL.Path", r.URL.Path, "r.Host", r.Host, "r.Method", r.Method, "scheme", r.URL.Scheme, "remoteAddr", r.RemoteAddr, "tls", h.isTls)
 	r.URL.Host = r.Host
 	if h.isTls {
 		r.URL.Scheme = "https"
 	} else {
 		r.URL.Scheme = "http"
 	}
+	log.Println("URL", r.URL, "RemoteAddr", r.RemoteAddr)
 
 	if r.Header.Get("Upgrade") == "websocket" {
 		err := h.s.serveWebSocket(w, r)
