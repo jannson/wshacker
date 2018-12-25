@@ -193,7 +193,10 @@ func (s *wsServer) parseDNS(hosts string) error {
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		s.reverseUrlMap[scanner.Text()] = 1
+		dns := scanner.Text()
+		if len(dns) > 0 {
+			s.reverseUrlMap[dns] = 1
+		}
 	}
 	return nil
 }
