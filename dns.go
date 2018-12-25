@@ -196,10 +196,10 @@ func (dns *DnsProxy) handleUDP() error {
 
 	isReverse := dns.reverser.isReverse(host)
 	if isReverse {
-		log.Println("dns query=", host, "hack it to ", dns.dnsHack)
+		log.Println("dns query:", host, "hack it to:", dns.dnsHack)
 		dns.hackDns(buf, host, dns.dnsHack, addr)
 	} else {
-		log.Println("dns query=", host)
+		log.Println("dns query:", host)
 		q := &DnsQuery{
 			sid:  queryId,
 			addr: addr,
