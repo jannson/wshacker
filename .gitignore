@@ -2,3 +2,4 @@ privkey.pem
 fullchain.pem
 wshacker
 hosts
+certs
